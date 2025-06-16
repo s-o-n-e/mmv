@@ -51,13 +51,15 @@
       return coords;
     }
 
-    function showTrajectory(coords) {
-      if (!map) {
-        map = L.map('map');
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(map);
-      }
+      function showTrajectory(coords) {
+        if (!map) {
+          map = L.map('map', { maxZoom: 22 });
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+            maxNativeZoom: 19,
+            maxZoom: 22
+          }).addTo(map);
+        }
       if (poly) {
         poly.remove();
       }
