@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>POS Trajectory Viewer 2</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    body { font-family: sans-serif; margin:1em; }
+    #map { height: 60vh; margin-top:1em; }
+    .slider-wrap-inner {
+      position: relative;
+      height: 5em;
+      padding-bottom: 0.5em;
+      background: #e2e2ee;
+    }
+    .slider-canvas {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: pointer;
+      user-select: none;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+  <h2>POS Trajectory Viewer with Slider</h2>
+  <div>
+    <select id="poslist"></select>
+    <button id="loadbtn">Load</button>
+  </div>
+  <div id="map"></div>
+  <div style="margin-top:1em;">
+    <span><b>startCalTime:</b> <span id="starttime">-</span></span>
+    <span style="margin-left:2em;"><b>currT:</b> <span id="currt">0</span> ms</span>
+  </div>
+  <div class="slider-wrap-inner">
+    <canvas id="slider-canvas" class="slider-canvas"></canvas>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const posListEl = document.getElementById('poslist');
+    const loadBtn = document.getElementById('loadbtn');
+    const startTimeEl = document.getElementById('starttime');
+    const currTEl = document.getElementById('currt');
+    const sliderCanvas = document.getElementById('slider-canvas');
+    const sliderWrap = document.querySelector('.slider-wrap-inner');
+    let map, poly, marker;
+    let traj = [];
+    let startTime = 0;
+    let lengthMs = 0;
+    let currT = 0;
+
+    fetch('/pos_files')
+      .then(r => r.json())
+      .then(list => {
+        for (const p of list) {
+          const opt = document.createElement('option');
+          opt.value = p;
+          opt.textContent = p;
+          posListEl.appendChild(opt);
+        }
+      });
+
+    function parsePos(text) {
+      const lines = text.split(/\r?\n/);
+      const data = [];
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t || t.startsWith('%') || t.startsWith('#')) continue;
+        const cols = t.split(/\s+/);
+        if (cols.length < 4) continue;
+        const timeStr = cols[0] + ' ' + cols[1];
+        const ms = Date.parse(timeStr);
+        const lat = parseFloat(cols[2]);
+        const lon = parseFloat(cols[3]);
+        if (!isNaN(ms) && !isNaN(lat) && !isNaN(lon)) {
+          data.push({t: ms, lat, lon});
+        }
+      }
+      return data;
+    }
+
+    function formatCalTime(ms) {
+      const d = new Date(ms);
+      const y = d.getFullYear();
+      const mo = ('0'+(d.getMonth()+1)).slice(-2);
+      const da = ('0'+d.getDate()).slice(-2);
+      const h  = ('0'+d.getHours()).slice(-2);
+      const mi = ('0'+d.getMinutes()).slice(-2);
+      const s  = ('0'+d.getSeconds()).slice(-2);
+      const ms3= ('00'+d.getMilliseconds()).slice(-3);
+      return `${y}/${mo}/${da} ${h}:${mi}:${s}.${ms3}`;
+    }
+
+    function showTrajectory(trajData) {
+      const latlngs = trajData.map(p => [p.lat, p.lon]);
+      if (!map) {
+        map = L.map('map', { maxZoom: 22 });
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors',
+          maxNativeZoom: 19,
+          maxZoom: 22
+        }).addTo(map);
+      }
+      if (poly) poly.remove();
+      poly = L.polyline(latlngs, {color: 'red'}).addTo(map);
+      map.fitBounds(poly.getBounds());
+      if (marker) marker.remove();
+      marker = L.circleMarker(latlngs[0], {radius:6, color:'blue'}).addTo(map);
+    }
+
+    function interpPosition(tAbs) {
+      if (traj.length === 0) return null;
+      if (tAbs <= traj[0].t) return {lat: traj[0].lat, lon: traj[0].lon};
+      if (tAbs >= traj[traj.length-1].t) return {lat: traj[traj.length-1].lat, lon: traj[traj.length-1].lon};
+      let low = 0, high = traj.length - 1;
+      while (high - low > 1) {
+        const mid = (low + high) >> 1;
+        if (traj[mid].t <= tAbs) low = mid; else high = mid;
+      }
+      const p0 = traj[low];
+      const p1 = traj[high];
+      const r = (tAbs - p0.t) / (p1.t - p0.t);
+      return {lat: p0.lat + r*(p1.lat-p0.lat), lon: p0.lon + r*(p1.lon-p0.lon)};
+    }
+
+    function updateMarker() {
+      const pos = interpPosition(startTime + currT);
+      if (pos && marker) {
+        marker.setLatLng([pos.lat, pos.lon]);
+      }
+    }
+
+    function calcLabelStep(Tlen, targetLabels = 25) {
+      const bases = [1, 2, 2.5, 5, 10];
+      let tstep = Tlen / targetLabels;
+      if (tstep <= 0) return {major:1, minor:0.2};
+      let order = Math.floor(Math.log10(tstep));
+      let tstep_frac = tstep / Math.pow(10, order);
+      let tstep_base = bases.reduce((prev, curr) =>
+        Math.abs(curr - tstep_frac) < Math.abs(prev - tstep_frac) ? curr : prev
+      );
+      let major = tstep_base * Math.pow(10, order);
+      let minor = major / 5;
+      return {major, minor};
+    }
+
+    function renderSlider() {
+      const W = sliderCanvas.width = sliderWrap.offsetWidth;
+      const H = sliderCanvas.height = sliderWrap.offsetHeight;
+      const ctx = sliderCanvas.getContext('2d');
+      ctx.clearRect(0,0,W,H);
+      const baseline = H * 0.6;
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, baseline);
+      ctx.lineTo(W, baseline);
+      ctx.stroke();
+
+      if (lengthMs <= 0) return;
+      const lenSec = lengthMs / 1000;
+      const {major, minor} = calcLabelStep(lenSec);
+      const pxPerSec = W / lenSec;
+      ctx.font = '12px sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.textAlign = 'center';
+      for (let t = 0; t <= lenSec + 1e-6; t += minor) {
+        const isMajor = Math.abs((t/major) - Math.round(t/major)) < 1e-6;
+        const x = t * pxPerSec;
+        ctx.strokeStyle = '#444';
+        ctx.lineWidth = isMajor ? 1.5 : 1;
+        ctx.beginPath();
+        ctx.moveTo(x, baseline);
+        ctx.lineTo(x, baseline + (isMajor ? 15 : 8));
+        ctx.stroke();
+        if (isMajor) {
+          ctx.fillStyle = '#000';
+          ctx.fillText((t).toFixed(lenSec>10?0:1)+'s', x, baseline + 18);
+        }
+      }
+      const currX = currT / lengthMs * W;
+      ctx.strokeStyle = '#e33';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(currX, 0);
+      ctx.lineTo(currX, H);
+      ctx.stroke();
+    }
+
+    function updateAll() {
+      currTEl.textContent = currT.toFixed(0);
+      updateMarker();
+      renderSlider();
+    }
+
+    let dragging = false;
+    function posFromX(x) {
+      return Math.max(0, Math.min(x / sliderCanvas.width * lengthMs, lengthMs));
+    }
+    sliderCanvas.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const rect = sliderCanvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * sliderCanvas.width / sliderCanvas.offsetWidth;
+      currT = posFromX(x);
+      dragging = true;
+      updateAll();
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const rect = sliderCanvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * sliderCanvas.width / sliderCanvas.offsetWidth;
+      currT = posFromX(x);
+      updateAll();
+    });
+    window.addEventListener('mouseup', () => { dragging = false; });
+    sliderCanvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const rect = sliderCanvas.getBoundingClientRect();
+      const x = (e.touches[0].clientX - rect.left) * sliderCanvas.width / sliderCanvas.offsetWidth;
+      currT = posFromX(x);
+      dragging = true;
+      updateAll();
+    });
+    window.addEventListener('touchmove', (e) => {
+      if (!dragging) return;
+      const rect = sliderCanvas.getBoundingClientRect();
+      const x = (e.touches[0].clientX - rect.left) * sliderCanvas.width / sliderCanvas.offsetWidth;
+      currT = posFromX(x);
+      updateAll();
+    });
+    window.addEventListener('touchend', () => { dragging = false; });
+
+    loadBtn.addEventListener('click', () => {
+      const path = posListEl.value;
+      if (!path) return;
+      fetch('/media/' + path)
+        .then(r => r.text())
+        .then(text => {
+          traj = parsePos(text);
+          if (traj.length < 2) return;
+          startTime = traj[0].t;
+          lengthMs = traj[traj.length-1].t - startTime;
+          startTimeEl.textContent = formatCalTime(startTime);
+          currT = 0;
+          showTrajectory(traj);
+          renderSlider();
+        });
+    });
+
+    window.addEventListener('resize', renderSlider);
+  </script>
+</body>
+</html>
