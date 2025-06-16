@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>HLSパネル×2 ＋ SYSTIMEパネル統合テスト</title>
+  <style>
+    body { font-family: sans-serif; background: #f8fafc; }
+    .mainbox { width:98vw; max-width:1240px; margin: 0.5em auto; }
+    .row { display: flex; flex-direction: row; gap: 2vw; margin-bottom: 0.5em; }
+    .panelbox { flex:1; min-width: 350px; background: #fff; border-radius: 10px; box-shadow: 2px 2px 12px #ccd; padding: 1em 1em; }
+    .hls-panel { margin-bottom: 1.3em; }
+    .systime-panel { margin-bottom: 0.5em; background: #eaf6ff; border-radius: 12px; box-shadow: 0 1px 7px #aad; padding: 0.5em 1em; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+  <div class="mainbox">
+    <div id="systimepanel-mount" class="systime-panel"></div>
+    <div class="row">
+      <div id="childpanel-mount-1" class="panelbox"></div>
+      <div id="childpanel-mount-2" class="panelbox"></div>
+    </div>
+  </div>
+  <script type="module">
+    import { createHlsPanel } from './hls-panel.js';
+    import { createSystimePanel } from './systime-panel.js';
+
+    // 1. ChildPanels配列で管理
+    const ChildPanels = [];
+
+    // 2. まずSYSTIMEパネルを生成
+    const systimePanel = createSystimePanel(
+      document.getElementById('systimepanel-mount'),
+      {
+        width: "95%",
+        ChildPanels: ChildPanels // 空でも可、後でsetChildPanels
+      }
+    );
+    fetch('/hls_streams')
+    .then(res => res.json())
+    .then(list => {
+        const fileLists = list.map(e => e.playlist).sort((a, b) => a.localeCompare(b));
+
+	// 4. HLSパネル2枚（master/slave）生成
+	const hlsPanelMaster = createHlsPanel(
+	    document.getElementById('childpanel-mount-1'),
+	    {
+		width: "90%",
+		fileList: fileLists,
+		master: true
+	    }
+	);
+	const hlsPanelSlave = createHlsPanel(
+	    document.getElementById('childpanel-mount-2'),
+	    {
+		width: "90%",
+		fileList: fileLists,
+		master: false
+	    }
+	);
+	// 5. ChildPanelsを再登録
+	ChildPanels.push(hlsPanelMaster, hlsPanelSlave);
+	if (systimePanel.setChildPanels) systimePanel.setChildPanels(ChildPanels);
+
+	// 6. SYSTIMEパネル ←→ 各HLSパネルのコールバック連携
+	//    有効区間と現在時刻の通知連携
+	for (const panel of ChildPanels) {
+	    if (panel.setOnValidRangeChange) {
+		//console.log(panel, "  override setOnValidRangeChange");
+		panel.setOnValidRangeChange((TstartCalTime, Tlen) => {
+		    //console.log("setOnValidRangeChange invoked. TstartCalTime=",TstartCalTime);
+		    // HLSパネルからSYSTIMEパネルへ有効区間を通知
+		    systimePanel.onValidRange(TstartCalTime, Tlen, panel);
+		});
+	    }
+	    if (panel.setOnCurrTChange) {
+		panel.setOnCurrTChange((currT) => {
+		    // HLSパネルからSYSTIMEパネルへ現在時刻を通知
+		    //console.log("SYSTIME:  onCurrT:",currT, " Panel:",panel);
+		    systimePanel.onCurrT(currT, panel);
+		});
+	    }
+	}
+    });
+  </script>
+</body>
+</html>
