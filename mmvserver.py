@@ -129,6 +129,16 @@ def list_hls_streams():
         })
     return jsonify(streams)
 
+@app.route('/pos_files')
+def list_pos_files():
+    """media/pos 以下の .pos ファイル一覧を返す"""
+    base = os.path.join(MEDIA_DIR, 'pos')
+    files = glob(os.path.join(base, '**', '*.pos'), recursive=True)
+    # MEDIA_DIRからの相対パスに変換
+    rel_files = [os.path.relpath(f, MEDIA_DIR).replace('\\', '/') for f in files]
+    rel_files.sort()
+    return jsonify(rel_files)
+
 @app.route('/media/<path:filename>')
 def serve_media(filename):
     # /media/... → filesystem の ./media/...
