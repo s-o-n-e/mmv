@@ -224,6 +224,31 @@
       return {major, minor};
     }
 
+    function drawFlag(ctx, x, baseline, H, color, LR = 'L') {
+      const poleHeight = H * 0.45;
+      const flagW = poleHeight / 2.7;
+      const flagH = poleHeight / 2.2;
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, baseline);
+      ctx.lineTo(x, baseline - poleHeight);
+      ctx.stroke();
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(x, baseline - poleHeight);
+      if (LR === 'L') {
+        ctx.lineTo(x + flagW, baseline - poleHeight + flagH / 2);
+      } else {
+        ctx.lineTo(x - flagW, baseline - poleHeight + flagH / 2);
+      }
+      ctx.lineTo(x, baseline - poleHeight + flagH);
+      ctx.closePath();
+      ctx.fill();
+    }
+
     function renderSlider() {
       const W = sliderCanvas.width = sliderWrap.offsetWidth;
       const H = sliderCanvas.height = sliderWrap.offsetHeight;
@@ -262,13 +287,7 @@
       for (const ft of flagTimes) {
         const x = ft / lengthMs * W;
         flagPositions.push({t: ft, x});
-        ctx.fillStyle = '#f00';
-        ctx.beginPath();
-        ctx.moveTo(x, baseline - 20);
-        ctx.lineTo(x + 5, baseline - 10);
-        ctx.lineTo(x - 5, baseline - 10);
-        ctx.closePath();
-        ctx.fill();
+        drawFlag(ctx, x, baseline, H, '#f00');
       }
 
       const currX = currT / lengthMs * W;
@@ -294,7 +313,9 @@
       e.preventDefault();
       const rect = sliderCanvas.getBoundingClientRect();
       const x = (e.clientX - rect.left) * sliderCanvas.width / sliderCanvas.offsetWidth;
-      const hit = flagPositions.find(fp => Math.abs(fp.x - x) < 6);
+      const y = (e.clientY - rect.top) * sliderCanvas.height / sliderCanvas.offsetHeight;
+      const baseline = sliderCanvas.height * 0.6;
+      const hit = flagPositions.find(fp => Math.abs(fp.x - x) < 6 && y < baseline - 2);
       if (hit) {
         currT = hit.t;
         updateAll();
@@ -316,7 +337,9 @@
       e.preventDefault();
       const rect = sliderCanvas.getBoundingClientRect();
       const x = (e.touches[0].clientX - rect.left) * sliderCanvas.width / sliderCanvas.offsetWidth;
-      const hit = flagPositions.find(fp => Math.abs(fp.x - x) < 6);
+      const y = (e.touches[0].clientY - rect.top) * sliderCanvas.height / sliderCanvas.offsetHeight;
+      const baseline = sliderCanvas.height * 0.6;
+      const hit = flagPositions.find(fp => Math.abs(fp.x - x) < 6 && y < baseline - 2);
       if (hit) {
         currT = hit.t;
         updateAll();
