@@ -53,7 +53,8 @@
     const sliderWrap = document.querySelector('.slider-wrap-inner');
     const setFlagBtn = document.getElementById('setflagbtn');
     const clearFlagBtn = document.getElementById('clearflagbtn');
-    let map, poly, marker;
+    let map, poly, marker, normalLine;
+    let obsMarkers = [];
     let traj = [];
     let startTime = 0;
     let lengthMs = 0;
@@ -114,10 +115,22 @@
         }).addTo(map);
       }
       if (poly) poly.remove();
+      for (const m of obsMarkers) m.remove();
+      obsMarkers = [];
       poly = L.polyline(latlngs, {color: 'blue'}).addTo(map);
+      const w = poly.options.weight || 3;
+      const r = Math.max(1, w * 0.75);
+      for (const ll of latlngs) {
+        const om = L.circleMarker(ll, {radius: r, color:'yellow', fillColor:'yellow', fillOpacity:1, weight:0});
+        om.addTo(map);
+        obsMarkers.push(om);
+      }
       map.fitBounds(poly.getBounds());
       if (marker) marker.remove();
-      marker = L.circleMarker(latlngs[0], {radius:6, color:'red'}).addTo(map);
+      marker = L.circleMarker(latlngs[0], {radius:6, color:'red', fillColor:'red', fillOpacity:1}).addTo(map);
+      if (normalLine) normalLine.remove();
+      normalLine = L.polyline([latlngs[0], latlngs[0]], {color:'#f0f', weight:2}).addTo(map);
+      updateMarker();
     }
 
     function interpPosition(tAbs) {
@@ -140,6 +153,15 @@
       if (pos && marker) {
         marker.setLatLng([pos.lat, pos.lon]);
       }
+      if (pos && normalLine) {
+        const orient = orientationAt(startTime + currT);
+        const len = Math.hypot(orient.vx, orient.vy) || 1;
+        const nx = -orient.vy / len;
+        const ny = orient.vx / len;
+        const p1 = offsetLatLon(pos.lat, pos.lon, nx*3, ny*3);
+        const p2 = offsetLatLon(pos.lat, pos.lon, -nx*3, -ny*3);
+        normalLine.setLatLngs([p1, p2]);
+      }
     }
 
     function orientationAt(tAbs) {
@@ -160,6 +182,13 @@
       const vx = (p1.lon - p0.lon) * rad * Math.cos(lat0*rad) * 6378137;
       const vy = (p1.lat - p0.lat) * rad * 6378137;
       return {vx, vy};
+    }
+
+    function offsetLatLon(lat0, lon0, dx, dy) {
+      const rad = Math.PI/180;
+      const dLat = dy / 6378137 / rad;
+      const dLon = dx / (6378137 * Math.cos(lat0*rad)) / rad;
+      return [lat0 + dLat, lon0 + dLon];
     }
 
     function computeFlags() {
